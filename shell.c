@@ -11,6 +11,112 @@
 #define MAX_PATH 150
 #define MAX_ARGV 50
 
+// Protótipos
+void handler(int);
+int verifyBackground(int *, char *[MAX_ARGV]);
+int verifyOutput(int*, char *[MAX_ARGV], char []);
+int verifyPipe(int, char *[MAX_ARGV], char *[MAX_ARGV], char *[MAX_ARGV]);
+void handleOutput(int *, char []);
+void handlePipe(char *[MAX_ARGV], char *[MAX_ARGV]);
+void handleCd(char [], char [], char []);
+
+int main() {
+  pid_t result, first, second;
+  char *arg, input[MAX_INPUT], filename[MAX_INPUT], curDir[MAX_PATH], lastDir[MAX_PATH], *argv[MAX_ARGV], *argvFirst[MAX_ARGV], *argvSecond[MAX_ARGV];
+  int k, code, fileDescriptor, status, argc, isBackground, isOutput, isPipe, pipefd[2];
+
+  // Mostrar diretório atual no shell
+  if (getcwd(curDir, sizeof(curDir)) == NULL) {
+    perror("getcwd() error");
+    return 1;
+  }
+
+  // Loop para executar comandos
+  while (1) {
+    argc = 0;
+    isBackground = 0;
+    isOutput = 0;
+    isPipe = 0;
+
+    // Ler input do usuário
+    printf("\x1b[96mJvShell\x1b[0m:\x1b[95m%s\x1b[0m$ ", curDir);
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;
+
+    // Separar o input em um array de argumentos
+    arg = strtok(input, " ");
+    while (arg != NULL && argc < (MAX_ARGV - 1)) {
+      argv[argc++] = arg;
+      arg = strtok(NULL, " ");
+    }
+    argv[argc] = NULL; 
+
+    // Nenhum argumento informado
+    if (argc == 0) {
+      continue;
+    }
+
+    // Built in para sair do terminal
+    if (strcmp(argv[0], "exit") == 0) {
+      break;
+    } 
+
+    // Execução built in cd
+    if (strcmp(argv[0], "cd") == 0) {
+      handleCd(argv[1], curDir, lastDir);
+      continue;
+    }
+
+    // Verificações
+    isBackground = verifyBackground(&argc, argv);
+    isOutput = verifyOutput(&argc, argv, filename);
+    isPipe = verifyPipe(argc, argv, argvFirst, argvSecond);
+
+    // Verifica inputs inválidos
+    if ((isOutput && isBackground) || (isOutput && isPipe) || (isBackground && isPipe)) {
+      printf("invalid input\n");
+      continue;
+    }
+
+    // Execução do input com pipe
+    if (isPipe) {
+      handlePipe(argvFirst, argvSecond);
+      continue;
+    }
+
+    // Criar processo filho
+    result = fork();
+    if (result == -1) {
+      perror("fork() error");
+      exit(1);
+    }
+
+    if (result == 0) {
+      // Execução do input com saída em um arquivo
+      if (isOutput) {
+        handleOutput(&fileDescriptor, filename);
+      }
+
+      // Execução do input do usuário
+      code = execvp(argv[0], argv);
+      if (code == -1) {
+        perror("execvp() error");
+        exit(1);
+      }
+    } else {
+      // Execução do input em segundo plano
+      if (isBackground) {
+        signal(SIGCHLD, handler);
+      // Execução do input em primeiro plano
+      } else {
+        wait(&status);
+      }
+    }
+  }
+
+  return 0;
+}
+
 // Função para tratar os processos filhos encerrados
 void handler(int signal) {
   int status;
@@ -149,101 +255,4 @@ void handleCd(char arg[], char curDir[], char lastDir[]) {
     strcpy(lastDir, curDir);
     getcwd(curDir, MAX_PATH);
   }
-}
-
-int main() {
-  pid_t result, first, second;
-  char *arg, input[MAX_INPUT], filename[MAX_INPUT], curDir[MAX_PATH], lastDir[MAX_PATH], *argv[MAX_ARGV], *argvFirst[MAX_ARGV], *argvSecond[MAX_ARGV];
-  int k, code, fileDescriptor, status, argc, isBackground, isOutput, isPipe, pipefd[2];
-
-  // Mostrar diretório atual no shell
-  if (getcwd(curDir, sizeof(curDir)) == NULL) {
-    perror("getcwd() error");
-    return 1;
-  }
-
-  // Loop para executar comandos
-  while (1) {
-    argc = 0;
-    isBackground = 0;
-    isOutput = 0;
-    isPipe = 0;
-
-    // Ler input do usuário
-    printf("\x1b[96mJvShell\x1b[0m:\x1b[95m%s\x1b[0m$ ", curDir);
-    fgets(input, sizeof(input), stdin);
-    input[strcspn(input, "\n")] = 0;
-
-    // Separar o input em um array de argumentos
-    arg = strtok(input, " ");
-    while (arg != NULL && argc < (MAX_ARGV - 1)) {
-      argv[argc++] = arg;
-      arg = strtok(NULL, " ");
-    }
-    argv[argc] = NULL; 
-
-    // Nenhum argumento informado
-    if (argc == 0) {
-      continue;
-    }
-
-    // Built in para sair do terminal
-    if (strcmp(argv[0], "exit") == 0) {
-      break;
-    } 
-
-    // Execução built in cd
-    if (strcmp(argv[0], "cd") == 0) {
-      handleCd(argv[1], curDir, lastDir);
-      continue;
-    }
-
-    // Verificações
-    isBackground = verifyBackground(&argc, argv);
-    isOutput = verifyOutput(&argc, argv, filename);
-    isPipe = verifyPipe(argc, argv, argvFirst, argvSecond);
-
-    // Verifica inputs inválidos
-    if ((isOutput && isBackground) || (isOutput && isPipe) || (isBackground && isPipe)) {
-      printf("invalid input\n");
-      continue;
-    }
-
-    // Execução do input com pipe
-    if (isPipe) {
-      handlePipe(argvFirst, argvSecond);
-      continue;
-    }
-
-    // Criar processo filho
-    result = fork();
-    if (result == -1) {
-      perror("fork() error");
-      exit(1);
-    }
-
-    if (result == 0) {
-      // Execução do input com saída em um arquivo
-      if (isOutput) {
-        handleOutput(&fileDescriptor, filename);
-      }
-
-      // Execução do input do usuário
-      code = execvp(argv[0], argv);
-      if (code == -1) {
-        perror("execvp() error");
-        exit(1);
-      }
-    } else {
-      // Execução do input em segundo plano
-      if (isBackground) {
-        signal(SIGCHLD, handler);
-      // Execução do input em primeiro plano
-      } else {
-        wait(&status);
-      }
-    }
-  }
-
-  return 0;
 }
